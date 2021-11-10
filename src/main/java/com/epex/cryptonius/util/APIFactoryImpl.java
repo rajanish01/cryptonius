@@ -15,12 +15,14 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class APIFactoryImpl implements APIFactory {
 
     private final HttpService httpService;
     private final Gson gson;
+    private final ProviderService providerService;
 
 
     private static final Logger log = LoggerFactory.getLogger(APIFactoryImpl.class);
@@ -31,13 +33,16 @@ public class APIFactoryImpl implements APIFactory {
 
     @Autowired
     public APIFactoryImpl(final HttpService httpService,
-                          final Gson gson) {
+                          final Gson gson,
+                          final ProviderService providerService) {
         this.httpService = httpService;
         this.gson = gson;
+        this.providerService = providerService;
     }
 
     @Override
     public List<TickerEntity> getLatestTicker() {
+        List<TickerEntity> tickerEntities = Lists.newArrayList();
         try {
             log.info("Fetching Latest Ticker Data For Timestamp : {}", dateFormat.format(new Date()));
             String response = httpService.get(TICKER_API);
@@ -45,14 +50,19 @@ public class APIFactoryImpl implements APIFactory {
             try {
                 Type responseType = new TypeToken<Map<String, TickerEntity>>() {
                 }.getType();
+                Set<String> dedicatedTokens = providerService.fetchDedicatedTokenList();
                 Map<String, TickerEntity> parsedData = gson.fromJson(response, responseType);
-                return Lists.newArrayList(parsedData.values());
+                parsedData.forEach((k, v) -> {
+                    if (dedicatedTokens.contains(k)) {
+                        tickerEntities.add(v);
+                    }
+                });
             } catch (Exception parseException) {
                 log.error("Error While Ticker Parsing : {}", parseException.getMessage());
             }
         } catch (Exception httpException) {
             log.error("Error While Ticker Get : {}", httpException.getMessage());
         }
-        return Lists.newArrayList();
+        return tickerEntities;
     }
 }
