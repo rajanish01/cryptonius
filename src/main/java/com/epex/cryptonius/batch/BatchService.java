@@ -1,6 +1,7 @@
 package com.epex.cryptonius.batch;
 
 import com.epex.cryptonius.prototype.APIFactory;
+import com.epex.cryptonius.rest.service.EMACalculatorService;
 import com.epex.cryptonius.rest.service.TickerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,12 +21,15 @@ public class BatchService {
 
     private final APIFactory apiFactory;
     private final TickerService tickerService;
+    private final EMACalculatorService emaCalculatorService;
 
     @Autowired
     public BatchService(final APIFactory apiFactory,
-                        final TickerService tickerService) {
+                        final TickerService tickerService,
+                        final EMACalculatorService emaCalculatorService) {
         this.apiFactory = apiFactory;
         this.tickerService = tickerService;
+        this.emaCalculatorService = emaCalculatorService;
     }
 
     @Scheduled(fixedRate = TICKER_DELAY * 1000)
@@ -36,5 +40,10 @@ public class BatchService {
         } else {
             log.error("Something Went Wrong, While Ticker Recording !");
         }
+    }
+
+    @Scheduled(fixedRate = 5 * 1000)
+    public void ema50Scheduler() {
+        emaCalculatorService.calculateLatestEMA("btc", 15, 50);
     }
 }
