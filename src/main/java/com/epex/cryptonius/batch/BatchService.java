@@ -9,15 +9,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.text.SimpleDateFormat;
+import java.util.Date;
 
 @Component
 public class BatchService {
 
     private static final Logger log = LoggerFactory.getLogger(BatchService.class);
-    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
+    private static final SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
 
-    private static final int TICKER_DELAY = 60;    //seconds
+    private static final int MILLIS = 1000;
+    private static final int TICKER_DELAY = 1;    //seconds
+    private static final int EMA50_15_MIN_DELAY = 1;
 
     private final APIFactory apiFactory;
     private final TickerService tickerService;
@@ -32,18 +36,30 @@ public class BatchService {
         this.emaCalculatorService = emaCalculatorService;
     }
 
-    @Scheduled(fixedRate = TICKER_DELAY * 1000)
+    @Scheduled(fixedRate = TICKER_DELAY * MILLIS)
     public void tickerScheduler() {
-        log.info("Starting Ticker Recording !");
+        log.debug("Starting Ticker Recording !");
         if (tickerService.persist(apiFactory.getLatestTicker())) {
-            log.info("Ticker Recording Successful !");
+            log.info("Ticker Recording Successful For Timestamp {} !", dateFormat.format(new Date()));
         } else {
             log.error("Something Went Wrong, While Ticker Recording !");
         }
     }
 
-    @Scheduled(fixedRate = 5 * 1000)
+    /**
+     * EMA50 & 15 MIN
+     */
+    @Scheduled(fixedRate = EMA50_15_MIN_DELAY * MILLIS, initialDelay = MILLIS)
+    //@Scheduled(fixedRate = 1000)      //Uncomment For Testing
     public void ema50Scheduler() {
-        emaCalculatorService.calculateLatestEMA("btc", 15, 50);
+        try {
+            log.debug("Calculating EMA50 With 15 MIN Width !");
+            if (emaCalculatorService.calculateLatestEMA("btc", 15, 50)
+                    .compareTo(BigDecimal.ZERO) > 0) {
+                log.info("EMA50 With 15 MIN Width Generated !");
+            }
+        } catch (Exception error) {
+            log.error("EMA Calculation Error !");
+        }
     }
 }

@@ -44,9 +44,9 @@ public class APIFactoryImpl implements APIFactory {
     public List<TickerEntity> getLatestTicker() {
         List<TickerEntity> tickerEntities = Lists.newArrayList();
         try {
-            log.info("Fetching Latest Ticker Data For Timestamp : {}", dateFormat.format(new Date()));
+            log.debug("Fetching Latest Ticker Data For Timestamp : {}", dateFormat.format(new Date()));
             String response = httpService.get(TICKER_API);
-            log.info("Parsing Ticker Data...");
+            log.debug("Parsing Ticker Data...");
             try {
                 Type responseType = new TypeToken<Map<String, TickerEntity>>() {
                 }.getType();

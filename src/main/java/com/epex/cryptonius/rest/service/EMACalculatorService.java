@@ -18,7 +18,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.math.MathContext;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,42 +55,38 @@ public class EMACalculatorService {
             query.with(Sort.by(new Sort.Order(Sort.Direction.DESC, "at"))).limit(range * width);
 
             List<TickerEntity> tickers = mongoTemplate.find(query, TickerEntity.class);
-            List<CandleStick> sticks = generateCandlesForRange(range, tickers);
-
-            Optional<EMAEntity> lastEMA = fetchLastEMAEntity(token, width);
-
-            if (lastEMA.isEmpty()) {
-                BigDecimal SMA = calculateLatestSMA(sticks);
-                EMAEntity ema = new EMAEntity(token);
-                EMAScale scale = EMAScale.findScaleForWidth(width);
-                switch (scale) {
-                    case FIFTY:
-                        ema.setEmaFifty(SMA);
-                        ema.setEmaFiftyFlag(true);
-                        break;
-                    case TWO_HUNDRED:
-                        ema.setEmaTwoHundred(SMA);
-                        ema.setEmaTwoHundredFlag(true);
-                        break;
-                }
-                emaRepository.save(ema);
-                return SMA;
+            if (tickers.isEmpty() || tickers.size() < range * width) {
+                log.warn("Not Enough Tickers, Skipping EMA{} Calculation In Range {} !", width, range);
+                return emaVal;
             }
 
-            BigDecimal lastEMAValue = filterEMAValueFromDB(width, lastEMA.get());
+            List<CandleStick> sticks = generateCandlesForRange(range, tickers);
+            if (sticks.isEmpty()) {
+                log.warn("Not Enough Candlesticks, Skipping EMA{} Calculation In Range {} !", width, range);
+                return emaVal;
+            }
+
+            Optional<EMAEntity> lastEMA = fetchLastEMAEntity(token, width);
+            BigDecimal lastEMAVal = lastEMA.isEmpty() ?
+                    calculateLatestSMA(sticks) : filterEMAValueFromDB(width, lastEMA.get());
+
+            if (lastEMA.isEmpty()) {
+                createEMAEntry(lastEMAVal, token, width);
+                return lastEMAVal;
+            }
+
             int period = tickers.size() / range;
             BigDecimal multiplier = calculateSmoothnessMultiplier(period);
             BigDecimal closingPrice = providerService.filterTickerForTokenFromResponse(
                     apiFactory.getLatestTicker(), token).getLast();
 
             //EMA: {Close - EMA(previous day)} x multiplier + EMA(previous day)
-            emaVal = (closingPrice.subtract(lastEMAValue)).multiply(multiplier).add(lastEMAValue);
+            emaVal = (closingPrice.subtract(emaVal)).multiply(multiplier).add(emaVal);
 
         } catch (Exception emaCalculationError) {
             log.error("Error While EMA Calculation : " + emaCalculationError.getMessage());
         }
         return emaVal;
-
     }
 
     private List<CandleStick> generateCandlesForRange(int range, List<TickerEntity> tickers) {
@@ -115,7 +111,7 @@ public class EMACalculatorService {
                 .stream()
                 .map(CandleStick::getClose)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return sum.divide(BigDecimal.valueOf(sticks.size()), new MathContext(4));
+        return sum.divide(BigDecimal.valueOf(sticks.size()), RoundingMode.CEILING);
     }
 
     private Optional<EMAEntity> fetchLastEMAEntity(String token, int width) {
@@ -163,6 +159,22 @@ public class EMACalculatorService {
             log.error("Error While EMA Filtering : {}", filterException.getMessage());
         }
         return new Criteria();
+    }
+
+    private void createEMAEntry(BigDecimal emaV, String token, int width) throws Exception {
+        EMAEntity ema = new EMAEntity(token);
+        EMAScale scale = EMAScale.findScaleForWidth(width);
+        switch (scale) {
+            case FIFTY:
+                ema.setEmaFifty(emaV);
+                ema.setEmaFiftyFlag(true);
+                break;
+            case TWO_HUNDRED:
+                ema.setEmaTwoHundred(emaV);
+                ema.setEmaTwoHundredFlag(true);
+                break;
+        }
+        emaRepository.save(ema);
     }
 }
 
