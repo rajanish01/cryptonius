@@ -14,10 +14,6 @@ import java.math.BigDecimal;
 @EqualsAndHashCode(callSuper = true)
 public class EMAFifteenFiftyEntity extends EMAEntity {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-
     public EMAFifteenFiftyEntity(String baseUnit, BigDecimal value) {
         super(baseUnit, value);
     }

@@ -129,7 +129,7 @@ public class EMACalculatorService {
 
         switch (scale) {
             case FIFTEEN_FIFTY:
-                return emaFifteenFiftyRepository.findTopByOrderByIdDescAndBaseUnit(token).orElse(null);
+                return emaFifteenFiftyRepository.findLastEntry(token).orElse(null);
         }
         return null;
     }
