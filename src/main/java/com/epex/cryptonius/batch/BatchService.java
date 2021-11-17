@@ -20,7 +20,8 @@ public class BatchService {
     private static final SimpleDateFormat dateFormat = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
 
     private static final int MILLIS = 1000;
-    private static final int TICKER_DELAY = 1;    //seconds
+    private static final int MINUTE = 60;
+    private static final int TICKER_DELAY = MINUTE;    //seconds
     private static final int EMA50_15_MIN_DELAY = 1;
 
     private final APIFactory apiFactory;
@@ -41,20 +42,18 @@ public class BatchService {
         log.debug("Starting Ticker Recording !");
         if (tickerService.persist(apiFactory.getLatestTicker())) {
             log.info("Ticker Recording Successful For Timestamp {} !", dateFormat.format(new Date()));
+            emaScheduler();
         } else {
             log.error("Something Went Wrong, While Ticker Recording !");
         }
     }
 
-    /**
-     * EMA50 & 15 MIN
-     */
-    @Scheduled(fixedRate = EMA50_15_MIN_DELAY * MILLIS, initialDelay = MILLIS)
-    //@Scheduled(fixedRate = 1000)      //Uncomment For Testing
-    public void ema50Scheduler() {
+
+
+    private void emaScheduler() {
         try {
             log.debug("Calculating EMA50 With 15 MIN Width !");
-            if (emaCalculatorService.calculateLatestEMA("btc", 15, 50)
+            if (emaCalculatorService.calculateEMA("btc", 15, 50)
                     .compareTo(BigDecimal.ZERO) > 0) {
                 log.info("EMA50 With 15 MIN Width Generated !");
             }

@@ -1,13 +1,15 @@
 package com.epex.cryptonius.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.data.mongodb.repository.Query;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-public interface TickerEntityRepository extends MongoRepository<TickerEntity, String> {
+@Repository
+public interface TickerEntityRepository extends JpaRepository<TickerEntity, Long> {
 
-    @Query(value = "{'base_unit': ?0}",sort = "{'at':-1}")
-    List<TickerEntity> findByBaseUnit(String token, int limit);
+    @Query(value = "select * from ticker_db tdb where tdb.base_unit = ?1 order by id desc limit ?2", nativeQuery = true)
+    List<TickerEntity> fetchDataSetForEMA(String token, int count);
 
 }

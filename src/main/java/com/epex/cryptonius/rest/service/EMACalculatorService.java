@@ -3,25 +3,18 @@ package com.epex.cryptonius.rest.service;
 import com.epex.cryptonius.domain.CandleStick;
 import com.epex.cryptonius.enums.EMAScale;
 import com.epex.cryptonius.prototype.APIFactory;
-import com.epex.cryptonius.repository.EMAEntity;
-import com.epex.cryptonius.repository.EMAEntityRepository;
-import com.epex.cryptonius.repository.TickerEntity;
+import com.epex.cryptonius.repository.*;
 import com.epex.cryptonius.util.ProviderService;
 import com.google.common.collect.Lists;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.query.Criteria;
-import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 
 @Service
 public class EMACalculatorService {
@@ -30,52 +23,56 @@ public class EMACalculatorService {
 
     private static final Logger log = LoggerFactory.getLogger(EMACalculatorService.class);
 
-    private final EMAEntityRepository emaRepository;
     private final APIFactory apiFactory;
     private final ProviderService providerService;
-
-    @Autowired
-    @SuppressWarnings("unused")
-    private MongoTemplate mongoTemplate;
+    private final TickerEntityRepository tickerRepository;
+    private final EMAFifteenFiftyRepository emaFifteenFiftyRepository;
 
     @Autowired
     public EMACalculatorService(final APIFactory apiFactory,
-                                final EMAEntityRepository emaRepository,
-                                final ProviderService providerService) {
+                                final EMAFifteenFiftyRepository emaFifteenFiftyRepository,
+                                final ProviderService providerService,
+                                final TickerEntityRepository tickerRepository) {
         this.apiFactory = apiFactory;
-        this.emaRepository = emaRepository;
+        this.emaFifteenFiftyRepository = emaFifteenFiftyRepository;
         this.providerService = providerService;
+        this.tickerRepository = tickerRepository;
     }
 
-    public BigDecimal calculateLatestEMA(String token, int range, int width) {
+    /**
+     * EMA50 15
+     * Time Range => 15     width => 50
+     *
+     * @param token
+     * @param timeRange
+     * @param width
+     * @return
+     */
+    public BigDecimal calculateEMA(String token, int timeRange, int width) {
         BigDecimal emaVal = BigDecimal.ZERO;
         try {
-            Query query = new Query();
-            query.addCriteria(Criteria.where("base_unit").is(token));
-            query.with(Sort.by(new Sort.Order(Sort.Direction.DESC, "at"))).limit(range * width);
-
-            List<TickerEntity> tickers = mongoTemplate.find(query, TickerEntity.class);
-            if (tickers.isEmpty() || tickers.size() < range * width) {
-                log.warn("Not Enough Tickers, Skipping EMA{} Calculation In Range {} !", width, range);
+            int dataSetCount = timeRange * width;
+            List<TickerEntity> tickers = tickerRepository.fetchDataSetForEMA(token, dataSetCount);
+            if (tickers.isEmpty() || tickers.size() < dataSetCount) {
+                log.warn("Not Enough Tickers, Skipping EMA{} Calculation In Range {} !", width, timeRange);
                 return emaVal;
             }
 
-            List<CandleStick> sticks = generateCandlesForRange(range, tickers);
+            List<CandleStick> sticks = generateCandlesForRange(timeRange, tickers);
             if (sticks.isEmpty()) {
-                log.warn("Not Enough Candlesticks, Skipping EMA{} Calculation In Range {} !", width, range);
+                log.warn("Not Enough Candlesticks, Skipping EMA{} Calculation In Range {} !", width, timeRange);
                 return emaVal;
             }
 
-            Optional<EMAEntity> lastEMA = fetchLastEMAEntity(token, width);
-            BigDecimal lastEMAVal = lastEMA.isEmpty() ?
-                    calculateLatestSMA(sticks) : filterEMAValueFromDB(width, lastEMA.get());
+            EMAEntity lastEMA = fetchLastEMAEntity(token, timeRange, width);
+            BigDecimal lastEMAVal = Objects.isNull(lastEMA) ? calculateLatestSMA(sticks) : lastEMA.getValue();
 
-            if (lastEMA.isEmpty()) {
-                createEMAEntry(lastEMAVal, token, width);
+            if (Objects.isNull(lastEMA)) {
+                createEMAEntry(lastEMAVal, token, timeRange, width);
                 return lastEMAVal;
             }
 
-            int period = tickers.size() / range;
+            int period = tickers.size() / timeRange;
             BigDecimal multiplier = calculateSmoothnessMultiplier(period);
             BigDecimal closingPrice = providerService.filterTickerForTokenFromResponse(
                     apiFactory.getLatestTicker(), token).getLast();
@@ -87,6 +84,19 @@ public class EMACalculatorService {
             log.error("Error While EMA Calculation : " + emaCalculationError.getMessage());
         }
         return emaVal;
+    }
+
+
+
+    private void createEMAEntry(BigDecimal lastEMAVal, String token, int timeRange, int width) throws Exception {
+        EMAScale scale = EMAScale.findScaleForWidth(timeRange, width);
+
+        switch (scale){
+            case FIFTEEN_FIFTY:
+                EMAFifteenFiftyEntity e = new EMAFifteenFiftyEntity(token,lastEMAVal);
+                emaFifteenFiftyRepository.save(e);
+                break;
+        }
     }
 
     private List<CandleStick> generateCandlesForRange(int range, List<TickerEntity> tickers) {
@@ -114,67 +124,19 @@ public class EMACalculatorService {
         return sum.divide(BigDecimal.valueOf(sticks.size()), RoundingMode.CEILING);
     }
 
-    private Optional<EMAEntity> fetchLastEMAEntity(String token, int width) {
-        Query query = new Query();
-        query.addCriteria(criteriaBuilder(width).and("base_unit").is(token));
-        query.with(Sort.by(new Sort.Order(Sort.Direction.DESC, "at"))).limit(1);
+    private EMAEntity fetchLastEMAEntity(String token, int timeRange, int width) throws Exception {
+        EMAScale scale = EMAScale.findScaleForWidth(timeRange, width);
 
-        EMAEntity lastEMA = mongoTemplate.findOne(query, EMAEntity.class);
-
-        return Objects.isNull(lastEMA) ? Optional.empty() : Optional.of(lastEMA);
+        switch (scale) {
+            case FIFTEEN_FIFTY:
+                return emaFifteenFiftyRepository.findTopByOrderByIdDescAndBaseUnit(token).orElse(null);
+        }
+        return null;
     }
 
     private BigDecimal calculateSmoothnessMultiplier(int timePeriod) {
         //Multiplier: (2 / (Time periods + 1) )
         return BigDecimal.valueOf((double) SMOOTHNESS_FACTOR / (timePeriod + 1));
-    }
-
-    private BigDecimal filterEMAValueFromDB(int width, EMAEntity lastEMA) {
-        try {
-            EMAScale scale = EMAScale.findScaleForWidth(width);
-
-            switch (scale) {
-                case FIFTY:
-                    return lastEMA.getEmaFifty();
-                case TWO_HUNDRED:
-                    return lastEMA.getEmaTwoHundred();
-            }
-        } catch (Exception filterException) {
-            log.error("Error While EMA Filtering : {}", filterException.getMessage());
-        }
-        return BigDecimal.ZERO;
-    }
-
-    private Criteria criteriaBuilder(int width) {
-        try {
-            EMAScale scale = EMAScale.findScaleForWidth(width);
-
-            switch (scale) {
-                case FIFTY:
-                    return Criteria.where("emaFiftyFlag").is(true);
-                case TWO_HUNDRED:
-                    return Criteria.where("emaTwoHundredFlag").is(true);
-            }
-        } catch (Exception filterException) {
-            log.error("Error While EMA Filtering : {}", filterException.getMessage());
-        }
-        return new Criteria();
-    }
-
-    private void createEMAEntry(BigDecimal emaV, String token, int width) throws Exception {
-        EMAEntity ema = new EMAEntity(token);
-        EMAScale scale = EMAScale.findScaleForWidth(width);
-        switch (scale) {
-            case FIFTY:
-                ema.setEmaFifty(emaV);
-                ema.setEmaFiftyFlag(true);
-                break;
-            case TWO_HUNDRED:
-                ema.setEmaTwoHundred(emaV);
-                ema.setEmaTwoHundredFlag(true);
-                break;
-        }
-        emaRepository.save(ema);
     }
 }
 
